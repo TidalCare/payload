@@ -1,6 +1,6 @@
 {
   "name": "@payloadcms/plugin-database-less",
-  "version": "3.15.0",
+  "version": "3.15.1",
   "description": "plugin for Payload",
   "keywords": [
     "payload",

@@ -10,6 +10,7 @@ import type {
   PayloadRequest,
   PopulateType,
   SelectType,
+  User,
   Where,
 } from 'payload'
 
@@ -185,6 +186,7 @@ type OperationArgs = {
   req?: Partial<PayloadRequest>
   select?: SelectType
   sort?: string | string[]
+  user?: User
   where?: Where
 }
 
@@ -209,8 +211,20 @@ export const databaseLessPlugin =
       args: OperationArgs,
       data?: unknown,
     ) => {
-      let body: BodyInit | undefined = undefined
       const headers = new Headers(args.req?.headers)
+
+      // Use dynamic import to avoid errors when next.js is not available and the plugin is installed
+      try {
+        const { headers: getHeaders } = await import('next/headers.js')
+        for (const [key, value] of await getHeaders()) {
+          // Merge headers, for example to forward current user' cookies if it they weren't in req.headers already
+          headers.set(key, value)
+        }
+        // eslint-disable-next-line no-empty
+      } catch {}
+
+      let body: BodyInit | undefined = undefined
+
       if (method === 'PATCH' || method === 'POST') {
         headers.set('Content-Type', 'application/json')
         body = JSON.stringify(data)
@@ -262,6 +276,8 @@ export const databaseLessPlugin =
       },
     ]
 
+    const incomingOnInit = incomingConfig.onInit
+
     incomingConfig.onInit = async (payload) => {
       payload.find = (args) => request('GET', `/${args.collection}`, args)
       payload.findByID = (args) => request('GET', `/${args.collection}/${args.id}`, args)
@@ -294,6 +310,12 @@ export const databaseLessPlugin =
         }
 
         return request('DELETE', path, args)
+      }
+
+      payload.logger.info(`Payload Local API has been patched to use REST API on ${apiURL}`)
+
+      if (incomingOnInit && pluginConfig.forceEnableOnInit) {
+        await incomingOnInit(payload)
       }
     }
 
