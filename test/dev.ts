@@ -86,7 +86,7 @@ if (testSuiteArg === 'plugin-database-less' && process.env.DATABASE_LESS_MODE !=
       WRITE_DB_ADAPTER: 'false',
       DISABLE_TEST_HOOKS: 'true',
       // Change .next dir for this process to avoid overlap
-      NEXT_DIST_DIR: './test/plugin-database-less/.db-less-next',
+      NEXT_DIST_DIR: './.next/.next-admin-only',
     },
     cwd: process.cwd(),
   })
