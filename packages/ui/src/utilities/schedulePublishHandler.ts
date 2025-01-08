@@ -46,6 +46,7 @@ export const schedulePublishHandler = async ({
         locale,
         user: user.id,
       },
+      req,
       task: 'schedulePublish',
       waitUntil: date,
     })

@@ -5,6 +5,7 @@ import type {
   CollectionConfig,
   Config,
   DatabaseAdapter,
+  IncomingAuthType,
   JoinQuery,
   PayloadRequest,
   PopulateType,
@@ -13,7 +14,6 @@ import type {
 } from 'payload'
 
 import assert from 'assert'
-import { InvalidConfiguration } from 'payload'
 import * as qs from 'qs-esm'
 
 import type { PluginConfig } from './types.js'
@@ -141,6 +141,7 @@ const parseToQuery = (args: OperationArgs): string => {
   if ('req' in args && args.req) {
     const req = args.req as PayloadRequest
 
+    // Forward search
     if (req.searchParams) {
       for (const [k, v] of req.searchParams) {
         toQuery[k] = v
@@ -173,6 +174,7 @@ const parseToQuery = (args: OperationArgs): string => {
 
 type OperationArgs = {
   depth?: number
+  disableErrors?: boolean
   draft?: boolean
   fallbackLocale?: false | null | string
   id?: number | string
@@ -201,22 +203,26 @@ export const databaseLessPlugin =
       return getMockDatabaseAdapter({ defaultIDType: incomingConfig.db.defaultIDType, payload })
     }
 
-    const get = (path: `/${string}`, args: OperationArgs) => {
-      return fetch(`${apiURL}${path}${parseToQuery(args)}`, {
-        headers: args.req?.headers,
-      }).then((res) => res.json())
-    }
-
-    const json = (method: 'PATCH' | 'POST', path: string, data: unknown, args: OperationArgs) => {
+    const request = async (
+      method: 'DELETE' | 'GET' | 'PATCH' | 'POST',
+      path: string,
+      args: OperationArgs,
+      data?: unknown,
+    ) => {
+      let body: BodyInit | undefined = undefined
       const headers = new Headers(args.req?.headers)
+      if (method === 'PATCH' || method === 'POST') {
+        headers.set('Content-Type', 'application/json')
+        body = JSON.stringify(data)
+      }
 
-      headers.set('Content-Type', 'application/json')
-
-      return fetch(`${apiURL}${path}${parseToQuery(args)}`, {
-        body: JSON.stringify(data),
+      const response = await fetch(`${apiURL}${path}${parseToQuery(args)}`, {
+        body,
         headers,
         method,
-      }).then((res) => res.json())
+      })
+
+      return response.json()
     }
 
     let adminUserCollection: CollectionConfig | null = null
@@ -238,19 +244,18 @@ export const databaseLessPlugin =
     }
 
     assert(adminUserCollection)
-    assert(adminUserCollection.auth)
 
     if (adminUserCollection.auth === true) {
       adminUserCollection.auth = {}
     }
 
-    // attach a strategy that uses fetch to /me instead of verifying jwt, todo: remove default
-    adminUserCollection.auth.strategies = [
+    // attach a strategy that uses fetch to /me instead of verifying jwt
+    ;(adminUserCollection.auth as IncomingAuthType).strategies = [
       {
         name: 'jwt-fetch',
         authenticate: async (args) => {
           const req: Partial<PayloadRequest> = { headers: args.headers }
-          const { user } = await get(`/${adminUserCollection.slug}/me`, { req })
+          const { user } = await request('GET', `/${adminUserCollection.slug}/me`, { req })
 
           return { user }
         },
@@ -258,16 +263,17 @@ export const databaseLessPlugin =
     ]
 
     incomingConfig.onInit = async (payload) => {
-      payload.find = (args) => get(`/${args.collection}`, args)
-      payload.findByID = (args) => get(`/${args.collection}/${args.id}`, args)
-      payload.findGlobal = (args) => get(`/globals/${args.slug}`, args)
-      payload.findVersions = (args) => get(`/${args.collection}/versions`, args)
-      payload.findVersionByID = (args) => get(`/${args.collection}/versions/${args.id}`, args)
-      payload.findGlobalVersions = (args) => get(`/globals/${args.slug}/versions`, args)
+      payload.find = (args) => request('GET', `/${args.collection}`, args)
+      payload.findByID = (args) => request('GET', `/${args.collection}/${args.id}`, args)
+      payload.findGlobal = (args) => request('GET', `/globals/${args.slug}`, args)
+      payload.findVersions = (args) => request('GET', `/${args.collection}/versions`, args)
+      payload.findVersionByID = (args) =>
+        request('GET', `/${args.collection}/versions/${args.id}`, args)
+      payload.findGlobalVersions = (args) => request('GET', `/globals/${args.slug}/versions`, args)
       payload.findGlobalVersionByID = (args) =>
-        get(`/globals/${args.slug}/versions/${args.id}`, args)
-      payload.count = (args) => get(`/${args.collection}/count`, args)
-      payload.create = (args) => json('POST', `/${args.collection}`, args.data, args)
+        request('GET', `/globals/${args.slug}/versions/${args.id}`, args)
+      payload.count = (args) => request('GET', `/${args.collection}/count`, args)
+      payload.create = (args) => request('POST', `/${args.collection}`, args, args.data)
       payload.update = (args) => {
         let path = `/${args.collection}`
 
@@ -275,10 +281,20 @@ export const databaseLessPlugin =
           path = `${path}/${args.id}`
         }
 
-        return json('PATCH', path, args.data, args)
+        return request('PATCH', path, args, args.data)
       }
 
-      payload.updateGlobal = (args) => json('PATCH', `/globals/${args.slug}`, args.data, args)
+      payload.updateGlobal = (args) => request('PATCH', `/globals/${args.slug}`, args, args.data)
+
+      payload.delete = (args) => {
+        let path = `/${args.collection}`
+
+        if ('id' in args) {
+          path = `${path}/${args.id}`
+        }
+
+        return request('DELETE', path, args)
+      }
     }
 
     return incomingConfig
